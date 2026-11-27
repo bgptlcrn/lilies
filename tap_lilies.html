@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Tap Lilies</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #02032a; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; cursor: pointer; }
+  #hint, #clear { position: fixed; left: 50%; transform: translateX(-50%); font: 15px sans-serif; color: #ffd9e6; }
+  #hint { top: 28px; white-space: nowrap; pointer-events: none; transition: opacity 0.8s; }
+  #clear { bottom: 24px; padding: 8px 22px; border-radius: 20px; border: 1px solid #ff8fb0;
+           background: rgba(255, 90, 140, 0.15); cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="screen"></canvas>
+<div id="hint">Tap anywhere to bloom a lily 🌸</div>
+<button id="clear" type="button">Clear</button>
+<script>
+const screenCanvas = document.getElementById("screen");
+const ctx = screenCanvas.getContext("2d");
+const garden = document.createElement("canvas");   // finished flowers stay here
+const g = garden.getContext("2d");
+
+// ---------- change the colors here: [petal tip, petal middle, center] ----------
+const COLORS = [
+  ["#ff2f6d", "#ff6a6a", "#7a0f5c"],   // coral
+  ["#ff1f5e", "#e8106a", "#4a0860"],   // deep pink
+  ["#ffa24a", "#ffe27a", "#e0365a"],   // yellow
+  ["#ff7a5c", "#ffb27a", "#b01864"],   // peach
+];
+
+const rand = (min, max) => min + Math.random() * (max - min);
+let W, H, dpr;
+const growing = [];
+
+function resize() {
+  const old = document.createElement("canvas");
+  old.width = garden.width; old.height = garden.height;
+  if (old.width) old.getContext("2d").drawImage(garden, 0, 0);
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = screenCanvas.clientWidth; H = screenCanvas.clientHeight;
+  for (const c of [screenCanvas, garden]) { c.width = W * dpr; c.height = H * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (old.width) g.drawImage(old, 0, 0, old.width / dpr, old.height / dpr);
+}
+
+// draws one glowing flower picture
+function makeFlower(r) {
+  const [tip, mid, core] = COLORS[Math.floor(Math.random() * COLORS.length)];
+  const petals = 6;                       // lilies have six petals
+  const size = Math.ceil(r * 3.2);
+  const c = document.createElement("canvas");
+  c.width = c.height = size * dpr;
+  const f = c.getContext("2d");
+  f.scale(dpr, dpr);
+  f.translate(size / 2, size / 2);
+  // a slight random tilt makes each flower look three-dimensional
+  const lean = rand(0, 6.28);
+  f.rotate(lean);
+  f.scale(1, rand(0.78, 0.98));
+  f.rotate(-lean);
+
+  // soft halo of light behind the flower
+  const halo = f.createRadialGradient(0, 0, 0, 0, 0, r * 1.5);
+  halo.addColorStop(0, tip + "55");
+  halo.addColorStop(1, tip + "00");
+  f.fillStyle = halo;
+  f.fillRect(-size / 2, -size / 2, size, size);
+
+  const turn = rand(0, 6.28);
+  // three narrow petals behind, then three wide petals in front
+  for (const i of [1, 3, 5, 0, 2, 4]) {
+    f.save();
+    f.rotate(turn + i / petals * Math.PI * 2 + rand(-0.08, 0.08));
+    const front = i % 2 === 0;
+    const len = r * rand(1.08, 1.22), w = r * (front ? 0.44 : 0.32), curl = rand(-0.28, 0.28) * r;
+    const petal = new Path2D();          // long petal with a curled, pointed tip
+    petal.moveTo(0, 0);
+    petal.bezierCurveTo(-w * 0.35, -len * 0.18, -w * 1.2, -len * 0.5, -w * 0.45, -len * 0.76);
+    petal.quadraticCurveTo(-w * 0.12 + curl * 0.5, -len * 0.9, curl, -len);
+    petal.quadraticCurveTo(w * 0.2 + curl * 0.5, -len * 0.88, w * 0.45, -len * 0.76);
+    petal.bezierCurveTo(w * 1.2, -len * 0.5, w * 0.35, -len * 0.18, 0, 0);
+
+    const grad = f.createRadialGradient(0, 0, 0, 0, 0, len * 1.05);
+    grad.addColorStop(0, core);
+    grad.addColorStop(0.32, tip);
+    grad.addColorStop(0.72, mid);
+    grad.addColorStop(1, tip);
+    f.shadowColor = tip;
+    f.shadowBlur = r * 0.22 * dpr;
+    f.fillStyle = grad;
+    f.fill(petal);
+    f.shadowBlur = 0;
+
+    f.clip(petal);
+    // light on one side, shadow on the other
+    const side = f.createLinearGradient(-w, 0, w, 0);
+    side.addColorStop(0, "rgba(255,240,210,0.34)");
+    side.addColorStop(0.5, "rgba(255,255,255,0)");
+    side.addColorStop(1, "rgba(70,0,80,0.34)");
+    f.fillStyle = side;
+    f.fillRect(-w * 1.5, -len * 1.2, w * 3, len * 1.3);
+    // fine veins that meet at the tip
+    f.lineCap = "round";
+    for (let v = -4; v <= 4; v++) {
+      f.strokeStyle = v % 2 ? "rgba(255,230,200,0.3)" : "rgba(120,0,80,0.2)";
+      f.lineWidth = Math.max(0.6, r * 0.012);
+      f.beginPath();
+      f.moveTo(0, -len * 0.08);
+      f.quadraticCurveTo(v * w * 0.24, -len * 0.52, curl * 0.85, -len * 0.95);
+      f.stroke();
+    }
+    // bright middle ridge
+    f.strokeStyle = "rgba(255,245,215,0.7)";
+    f.lineWidth = Math.max(1, r * 0.035);
+    f.beginPath();
+    f.moveTo(0, -len * 0.15);
+    f.quadraticCurveTo(curl * 0.15, -len * 0.55, curl * 0.8, -len * 0.9);
+    f.stroke();
+    // freckles
+    f.fillStyle = core;
+    for (let d = 0; d < 16; d++) {
+      const along = rand(0.18, 0.52);
+      f.beginPath();
+      f.arc(rand(-w, w) * along, -len * along, Math.max(0.6, r * rand(0.01, 0.024)), 0, 6.28);
+      f.fill();
+    }
+    // glowing rim
+    f.strokeStyle = "rgba(255,225,215,0.55)";
+    f.lineWidth = r * 0.05;
+    f.shadowColor = "#fff0dc";
+    f.shadowBlur = r * 0.12 * dpr;
+    f.stroke(petal);
+    f.restore();
+  }
+
+  // center: dark glow, starburst and golden pollen
+  const eye = f.createRadialGradient(0, 0, 0, 0, 0, r * 0.3);
+  eye.addColorStop(0, core);
+  eye.addColorStop(1, core + "00");
+  f.fillStyle = eye;
+  f.beginPath();
+  f.arc(0, 0, r * 0.3, 0, 6.28);
+  f.fill();
+  f.lineCap = "round";
+  // six long curved stamens with pollen, as lilies have
+  for (let i = 0; i < 6; i++) {
+    const ang = turn + i / 6 * Math.PI * 2 + 0.5 + rand(-0.15, 0.15), len = r * rand(0.5, 0.7);
+    const x = Math.cos(ang) * len, y = Math.sin(ang) * len;
+    f.strokeStyle = "#fff2c4";
+    f.lineWidth = Math.max(0.8, r * 0.022);
+    f.beginPath();
+    f.moveTo(0, 0);
+    f.quadraticCurveTo(x * 0.25 - y * 0.25, y * 0.25 + x * 0.25, x, y);
+    f.stroke();
+    f.save();
+    f.translate(x, y);
+    f.rotate(ang + 1.3);
+    f.fillStyle = "#b8401c";
+    f.shadowColor = "#ffb04a";
+    f.shadowBlur = r * 0.1 * dpr;
+    f.beginPath();
+    f.ellipse(0, 0, r * 0.07, r * 0.028, 0, 0, 6.28);
+    f.fill();
+    f.restore();
+  }
+  f.fillStyle = "#e8ffb0";
+  f.beginPath();
+  f.arc(0, 0, r * 0.06, 0, 6.28);
+  f.fill();
+  return { img: c, size, color: mid };
+}
+
+// tiny sparks that fly out when a flower pops
+const sparks = [];
+function burst(x, y, r, color) {
+  for (let i = 0; i < 18; i++) {
+    const ang = rand(0, 6.28), speed = rand(0.5, 1.6) * r;
+    sparks.push({ x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+                  born: performance.now(), color: i % 2 ? "#fff0b0" : color });
+  }
+}
+
+function bloom(x, y, r) {
+  const flower = makeFlower(r);
+  burst(x, y, r, flower.color);
+  growing.push({ ...flower, x, y, born: performance.now(),
+                 turn: 0, spin: rand(0.6, 1.4) * (Math.random() < 0.5 ? -1 : 1) });
+}
+
+function drawFlower(c, f, k) {
+  // springy pop: grows a bit past full size, then settles
+  const s = 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
+  c.save();
+  c.translate(f.x, f.y);
+  c.rotate(f.turn + f.spin * Math.pow(1 - k, 3));
+  c.scale(Math.max(s, 0), Math.max(s, 0));
+  c.globalAlpha = Math.min(1, k * 3);
+  c.drawImage(f.img, -f.size / 2, -f.size / 2, f.size, f.size);
+  c.restore();
+}
+
+// ---------- tap and drag ----------
+let down = false, last = null;
+const unit = () => Math.min(W, H);
+
+screenCanvas.addEventListener("pointerdown", e => {
+  down = true;
+  last = { x: e.clientX, y: e.clientY };
+  bloom(e.clientX, e.clientY, unit() * rand(0.13, 0.22));
+  document.getElementById("hint").style.opacity = 0;
+});
+
+screenCanvas.addEventListener("pointermove", e => {
+  if (!down) return;
+  const dx = e.clientX - last.x, dy = e.clientY - last.y;
+  if (Math.hypot(dx, dy) < unit() * 0.11) return;
+  // glowing dotted vine between the flowers
+  for (let i = 0; i <= 12; i++) {
+    g.fillStyle = i % 2 ? "#ffd86a" : "#3fe0a0";
+    g.shadowColor = g.fillStyle;
+    g.shadowBlur = 8;
+    g.beginPath();
+    g.arc(last.x + dx * i / 12 + rand(-3, 3), last.y + dy * i / 12 + rand(-3, 3), rand(1, 2.5), 0, 6.28);
+    g.fill();
+  }
+  g.shadowBlur = 0;
+  last = { x: e.clientX, y: e.clientY };
+  bloom(e.clientX, e.clientY, unit() * rand(0.06, 0.11));
+});
+
+for (const type of ["pointerup", "pointercancel"])
+  window.addEventListener(type, () => down = false);
+
+document.getElementById("clear").addEventListener("click", () => {
+  growing.length = 0;
+  g.clearRect(0, 0, W, H);
+});
+
+window.addEventListener("resize", resize);
+resize();
+
+function frame(now) {
+  ctx.fillStyle = "#02032a";
+  ctx.fillRect(0, 0, W, H);
+  // move finished flowers into the garden (oldest first)
+  while (growing.length && now - growing[0].born >= 900) drawFlower(g, growing.shift(), 1);
+  ctx.drawImage(garden, 0, 0, W, H);
+  for (const f of growing) drawFlower(ctx, f, Math.min(1, Math.max(0, (now - f.born) / 900)));
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const p = sparks[i], t = (now - p.born) / 900;
+    if (t >= 1) { sparks.splice(i, 1); continue; }
+    const k = 1 - Math.pow(1 - Math.max(t, 0), 3);
+    ctx.globalAlpha = 1 - Math.max(t, 0);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x + p.vx * k, p.y + p.vy * k, 2.2, 0, 6.28);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
